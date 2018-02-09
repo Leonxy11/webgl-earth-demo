@@ -1,0 +1,370 @@
+<!DOCTYPE html>
+<html lang="en" dir="ltr">
+<head>
+  <meta charset="UTF-8">
+  <title>webgl demo</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, minimum-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <meta name="format-detection" content="telephone=no">
+  <meta name="msapplication-tap-highlight" content="no">
+  <meta name="theme-color" content="#4e8ef7">
+
+  <!-- <link rel="icon" type="image/x-icon" href="assets/icon/favicon.ico">
+  <link rel="manifest" href="manifest.json">
+  <link href="build/main.css" rel="stylesheet"> -->
+  
+</head>
+<body onload="start()" style="margin:0;">
+    <canvas id="glcanvas" style="height:100vh;width:100vw;">
+     </canvas>
+</body>
+<script async type="text/javascript" src="dist/lib/gl-matrix.js"></script>
+<script async  type="text/javascript" src="dist/lib/webgl-utils.js"></script>
+<script async  type="text/javascript" src="dist/lib/webgl-debug.js"></script>
+<script async  type="text/javascript" src="dist/lib/cuon-utils.js"></script>
+<script async  type="text/javascript" src="dist/lib/cuon-matrix.js"></script>
+<script async  type="text/javascript">
+
+	const VSHADER_SOURCE = 
+	`attribute vec4 aVertexPosition;
+	attribute vec2 a_texCoord;
+  attribute vec2 a_normal;
+	uniform mat4 uModelViewMatrix;
+	uniform mat4 uProjectionMatrix;
+  uniform mat4 uCameraMatrix;
+  uniform vec3 u_lightColor;
+  uniform vec3 u_lightDirection;
+	varying vec2 v_texCoord;
+	void main(void) {
+		gl_Position = uProjectionMatrix * uCameraMatrix * uModelViewMatrix * aVertexPosition;
+		v_texCoord = a_texCoord;
+	}`;
+	const FSHADER_SOURCE = 
+	`precision mediump float;
+	varying vec2 v_texCoord;
+	uniform sampler2D u_texture;
+	void main(void) {
+		gl_FragColor = texture2D(u_texture, v_texCoord);
+	}`;
+
+	var selfrotate = true;
+
+  class glObj{
+    constructor(idname,ortho){
+      (idname&&Object.prototype.toString.call(idname) === "[object String]")
+        ?this.nodeitem = document.getElementById(idname):null;
+      this.ortho = ortho;
+      this.scale = this.ortho?100.0:1.0;
+      this.squareRotation = null;
+      this.lastSquareUpdateTime = null;
+    }
+
+    requestCORSIfNotSameOrigin(img, url) {
+      if ((new URL(url)).origin !== window.location.origin) {
+        img.crossOrigin = "anonymous";
+      }
+    }
+
+    getTextureRsc(gl,url) {
+      var image = new Image();
+      this.requestCORSIfNotSameOrigin(image,url);
+      image.src = url;
+      image.onload = function() {
+        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA,gl.UNSIGNED_BYTE, image);
+      }
+    }
+
+    toRadian(num){
+      return num * Math.PI / 180
+    }
+
+    /*实现正投影变换矩阵，实现之后视见体的尺寸与canvas的尺寸相当，
+      这就意味着WebGL中三维物体坐标的一个单位等价于canvas元素的一个像素
+      (虽然很简单，但是这个特性很重要)*/
+    setProjectionMatrixToOrtho(pMatrix,canvas) {
+      var near = 10;
+      var far = 400;
+      mat4.ortho(pMatrix, -canvas.width / 2, canvas.width / 2, 
+                canvas.height / 2, -canvas.height / 2, near, far);
+    }
+
+    //初始化webgl上下文
+    initWebGL(canvas) {
+      return getWebGLContext(canvas);
+    }
+
+  funcmouup(){
+      console.log(this);
+      this.dragging = false;
+      this.selfrotate = true; 
+      this.squareRotation += this.currentAngle[1];
+  };
+
+  initEventHandlers(canvas, currentAngle) {
+	  var dragging = false;         // Dragging or not
+	  var lastX = -1, lastY = -1;   // Last position of the mouse
+    this.currentAngle = currentAngle;
+	  let wheelFunc = (ev)=>{
+	  	let wheeldirection = (ev.wheelDelta||ev.detail)>0?1:-1;
+	  	currentAngle[2] = Math.min(currentAngle[2] += wheeldirection/5,-3)
+	  }
+
+	  canvas.onmousedown = (ev)=>{   // Mouse is pressed
+	  	var x = ev.clientX, y = ev.clientY;
+	    // Start dragging if a moue is in <canvas>
+	    var rect = ev.target.getBoundingClientRect();
+	    if (rect.left <= x && x < rect.right && rect.top <= y && y < rect.bottom) {
+	    	lastX = x; lastY = y;
+	    	dragging = true;
+	    	selfrotate = false;
+	    }
+	  };
+
+  	canvas.onmouseup = (ev)=>{
+      dragging = false;
+      selfrotate = true; 
+      this.squareRotation += currentAngle[1];
+    };
+    
+
+	  canvas.onmousemove = (ev)=>{ // Mouse is moved
+	  	var x = ev.clientX, y = ev.clientY;
+	  	if (dragging) {
+	      var factor = 100/canvas.height; // The rotation ratio
+	      var dx = factor * (x - lastX);
+	      var dy = factor * (y - lastY);
+	      // Limit x-axis rotation angle to -90 to 90 degrees
+	      currentAngle[0] = currentAngle[0] + dy;
+	      // Math.max(Math.min(currentAngle[0] + dy, 90.0), -90.0);
+	      currentAngle[1] = currentAngle[1] + dx;
+  	  }
+  	  lastX = x, lastY = y;
+  	};
+
+	  canvas.addEventListener("mousewheel",wheelFunc);  
+    canvas.addEventListener("DOMMouseScroll",wheelFunc);
+	}
+
+    initBuffers(gl) {
+      //createBuffer API创造并初始化一个WebGLBuffer保存数据
+      const positionBuffer = gl.createBuffer();
+      //把WebGLBuffer对象绑定在目标上
+      gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
+      
+      let scale = this.scale
+      const positionAndColor = [];
+
+      let m = 50;
+      let r = 2*scale;
+      for (let i = 0; i <= m; i++) {
+      	let u;
+      	let v;
+        let x;
+        let z;
+        let l = r*Math.sin(Math.PI*i/m);
+        let y = r*Math.cos(Math.PI*i/m);
+        for(let j = 0; j <= m; j++){
+          x = l*Math.cos(2*Math.PI*j/m);
+          z = l*Math.sin(2*Math.PI*j/m);
+          //纹理坐标
+          u = 1-(j/m);  
+          v = 1-(i/m);
+          positionAndColor.push(x, y, z, u, v);
+        }
+      }
+      gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(positionAndColor), gl.STATIC_DRAW);
+      return positionBuffer;
+    }
+
+    getSquareRotation(modelViewMatrix,currentAngle){
+      // console.log(selfrotate)
+    	mat4.translate(modelViewMatrix, modelViewMatrix,[-0.0, 0.0, currentAngle[2]]);//模型视图矩阵延Z轴平移
+    	mat4.rotate(modelViewMatrix, modelViewMatrix, this.toRadian(currentAngle[0]), [1, 0, 0]);//以Y轴为中心旋转
+      let currentTime= null;
+      if(selfrotate){
+       currentTime = Date.now();
+       if (this.lastSquareUpdateTime) {
+          let delta = currentTime - this.lastSquareUpdateTime;
+          this.squareRotation += (10 * delta) / 1000.0;
+          mat4.rotate(modelViewMatrix, modelViewMatrix, this.toRadian(this.squareRotation), [0, 1, 0]);
+        }
+        this.lastSquareUpdateTime = currentTime;
+        currentAngle[1] = 0;
+      }else{
+        this.lastSquareUpdateTime = Date.now()
+        let dX = this.squareRotation?currentAngle[1]+this.squareRotation:currentAngle[1];
+        mat4.rotate(modelViewMatrix, modelViewMatrix, this.toRadian(dX), [0, 1, 0]);
+      }
+    }
+
+    drawScene(gl, programInfo, buffers,currentAngle) {
+      gl.clearColor(0.0, 0.0, 0.0, 1.0);  // Clear to black, fully opaque
+      gl.clearDepth(1.0);                 // Clear everything
+      gl.enable(gl.DEPTH_TEST);           // Enable depth testing
+      gl.depthFunc(gl.LEQUAL);            // Near things obscure far things
+      
+      // Clear the canvas before we start drawing on it.
+      gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+
+      const aspect = gl.canvas.clientWidth / gl.canvas.clientHeight;
+      const zNear = 1.0;
+      const zFar = 100.0;
+      //初始化4x4投影矩阵
+      const projectionMatrix = mat4.create();
+      //生成具有给定边界的透视投影矩阵，mat4.perspective(矩阵, 视椎体竖直方向张角(45度), 宽高比, 近平面, 远平面);
+      mat4.perspective(projectionMatrix,
+                       this.toRadian(45),
+                       aspect,
+                       zNear,
+                       zFar);
+      this.ortho?this.setProjectionMatrixToOrtho(projectionMatrix,gl.canvas):null;
+      //初始化4x4模型视图矩阵
+      const modelViewMatrix = mat4.create();
+      //注意在操作矩阵前需要通过identity方法将矩阵设置为一个标准矩阵
+      mat4.identity(modelViewMatrix, modelViewMatrix);
+      const cameraMatrix = mat4.create();
+      mat4.lookAt(cameraMatrix, vec3.fromValues(0,0,0), vec3.fromValues(0,0,0), vec3.fromValues(0,1,0));
+      this.getSquareRotation(modelViewMatrix,currentAngle);
+
+      //维度，三维空间，四维时间
+      const numsize = 3;
+      //参数类型
+      const type = gl.FLOAT;
+      const normalize = false;
+      //每个顶点数据所占的字节数
+      const stride = 4*5;
+      //从绑定的缓冲区偏移offset个字节开始读数据，一个数据占4个字节
+      const texcoordOffset = 4*3;
+      gl.bindBuffer(gl.ARRAY_BUFFER, buffers);
+      /*void vertexAttribPointer(GLuint indx, GLint size, GLenum type, GLboolean normalized,GLsizei 
+        stride, GLintptr offset);的含义是告诉显卡从当前绑定的缓冲区（bindBuffer()指定的缓冲区）
+        中读取顶点数据，入口是GLuint indx,即传值给GLuint indx*/
+      gl.vertexAttribPointer(
+        programInfo.attribLocations.vertexPosition,
+        numsize,// 每次迭代使用几个单位的数据
+        type,// 单位数据类型是32位的浮点型
+        normalize,
+        stride,
+        0);
+      //启用顶点属性索引
+      gl.enableVertexAttribArray(programInfo.attribLocations.vertexPosition);
+
+      gl.bindBuffer(gl.ARRAY_BUFFER, buffers);
+      gl.vertexAttribPointer(
+        programInfo.attribLocations.texcoord,
+        2,
+        type,
+        normalize,
+        stride,
+        texcoordOffset);
+      gl.enableVertexAttribArray(programInfo.attribLocations.texcoord);
+        
+      //索引缓冲区对象IBO
+      const index = [];
+
+      let m = 50;
+      for (let i = 0; i < m; i++) {
+        for(let j = 0; j < m; j++){
+          var first = (i*(m+1)) + j;
+          var second = first + m + 1;
+          // index.push(second,second + 1,first + 1,first);
+          index.push(first);
+          index.push(second);
+          index.push(first + 1);
+          index.push(second);
+          index.push(second + 1);
+          index.push(first + 1);
+        }
+      }
+
+      var indexBuffer = gl.createBuffer();
+      gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, indexBuffer);
+      gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, new Uint16Array(index), gl.STATIC_DRAW);
+
+      //把定义的矩阵传递给着色器
+      gl.uniformMatrix4fv(
+          programInfo.uniformLocations.projectionMatrix,
+          false,
+          projectionMatrix);
+      gl.uniformMatrix4fv(
+          programInfo.uniformLocations.cameraMatrix,
+          false,
+          cameraMatrix);
+      gl.uniformMatrix4fv(
+          programInfo.uniformLocations.modelViewMatrix,
+          false,
+          modelViewMatrix);
+
+       gl.drawElements(gl.TRIANGLES, index.length, gl.UNSIGNED_SHORT, 0);
+      
+    }
+    
+  }
+
+  function createAndSetupTexture(gl){
+  	let texture = gl.createTexture();
+  	gl.bindTexture(gl.TEXTURE_2D, texture);
+  	gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
+  	gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+  	gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+  	gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+  	gl.generateMipmap(gl.TEXTURE_2D);
+  }
+
+  function start() {
+    var worker = new Worker('dist/limit-worker.js');
+    worker.postMessage({num:50,r:1});
+
+    worker.onmessage = function (e) {
+      console.log(e.data)
+    };
+  	
+    let globj = new glObj("glcanvas",false);
+    let cw = window.innerWidth;
+    let ch = window.innerHeight;
+    globj.nodeitem.width = cw;
+    globj.nodeitem.height = ch;
+    // 初始化 WebGL 上下文
+    let gl = globj.initWebGL(globj.nodeitem);
+    if (!gl) {
+    	console.log('Failed to get the rendering context for WebGL');
+    	return;
+    }
+    if (!initShaders(gl, VSHADER_SOURCE, FSHADER_SOURCE)) {
+    	console.log('Failed to intialize shaders.');
+    	return;
+    }
+    gl.viewport(0, 0, globj.nodeitem.width, globj.nodeitem.height);
+
+    let texture = createAndSetupTexture(gl);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE,
+              new Uint8Array([4, 2, 255, 255]));
+    let url = "https://earthobservatory.nasa.gov/blogs/elegantfigures/files/2011/10/land_shallow_topo_2011_8192.jpg";
+    globj.getTextureRsc(gl,url);
+
+    const programInfo = {
+        //定点着色器定点位置和片段着色器颜色
+        attribLocations: {
+        	vertexPosition: gl.getAttribLocation(gl.program, 'aVertexPosition'),
+        	texcoord:	gl.getAttribLocation(gl.program, "a_texCoord"),
+        },
+        //投影矩阵和模型视图矩阵
+        uniformLocations: {
+        	projectionMatrix: gl.getUniformLocation(gl.program, 'uProjectionMatrix'),
+          cameraMatrix: gl.getUniformLocation(gl.program, 'uCameraMatrix'),
+        	modelViewMatrix: gl.getUniformLocation(gl.program, 'uModelViewMatrix'),
+        },
+    };
+
+    const buffers = globj.initBuffers(gl);
+    let canvas = document.getElementById('webgl');
+    let currentAngle = [0.0, 0.0,-10.0];
+    globj.initEventHandlers(globj.nodeitem, currentAngle);
+
+    function draw(){
+    	globj.drawScene(gl, programInfo, buffers,currentAngle);
+    	requestAnimationFrame(draw,globj.nodeitem);
+    }
+    draw();
+  }
+</script>
+</html>
