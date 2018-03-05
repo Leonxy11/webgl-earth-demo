@@ -25,25 +25,52 @@
 <script async  type="text/javascript">
 
 	const VSHADER_SOURCE = 
-	`attribute vec4 aVertexPosition;
+	`attribute vec3 aVertexPosition;
 	attribute vec2 a_texCoord;
-  attribute vec2 a_normal;
+  attribute vec3 a_normal;
+
 	uniform mat4 uModelViewMatrix;
 	uniform mat4 uProjectionMatrix;
   uniform mat4 uCameraMatrix;
-  uniform vec3 u_lightColor;
+  uniform mat3 uNMatrix;
+
   uniform vec3 u_lightDirection;
+  uniform vec3 u_lightWorldPosition;
+
 	varying vec2 v_texCoord;
+  varying vec3 vTransformedNormal;
+  varying vec3 v_surfaceToLight;
+
 	void main(void) {
-		gl_Position = uProjectionMatrix * uCameraMatrix * uModelViewMatrix * aVertexPosition;
+    vec4 vPosition = uModelViewMatrix * vec4(aVertexPosition, 1.0);
+    gl_Position = uProjectionMatrix * uCameraMatrix * vPosition;
+
 		v_texCoord = a_texCoord;
+
+    vTransformedNormal = uNMatrix * a_normal;
+
+    v_surfaceToLight = normalize(u_lightWorldPosition - vPosition.xyz);
 	}`;
 	const FSHADER_SOURCE = 
 	`precision mediump float;
+  varying vec3 vTransformedNormal;
+  varying vec3 v_surfaceToLight;
 	varying vec2 v_texCoord;
+
 	uniform sampler2D u_texture;
 	void main(void) {
-		gl_FragColor = texture2D(u_texture, v_texCoord);
+    vec3 lightWeighting;
+    vec3 uPointLightingDiffuseColor;
+    // 由于 v_normal 是可变量，所以经过插值后不再是单位向量，
+    // 单位化后会成为单位向量
+    vec3 normal = normalize(vTransformedNormal);
+
+    float diffuseLightWeighting = max(dot(normal, v_surfaceToLight), 0.0);
+    uPointLightingDiffuseColor = vec3(1.0, 1.0, 1.0);
+    lightWeighting = uPointLightingDiffuseColor * diffuseLightWeighting;
+
+    vec4 textureColor = texture2D(u_texture, vec2(v_texCoord.s, v_texCoord.t));
+    gl_FragColor = vec4(textureColor.rgb * lightWeighting, textureColor.a);
 	}`;
 
 	var selfrotate = true;
@@ -92,13 +119,6 @@
       return getWebGLContext(canvas);
     }
 
-  funcmouup(){
-      console.log(this);
-      this.dragging = false;
-      this.selfrotate = true; 
-      this.squareRotation += this.currentAngle[1];
-  };
-
   initEventHandlers(canvas, currentAngle) {
 	  var dragging = false;         // Dragging or not
 	  var lastX = -1, lastY = -1;   // Last position of the mouse
@@ -132,10 +152,8 @@
 	      var factor = 100/canvas.height; // The rotation ratio
 	      var dx = factor * (x - lastX);
 	      var dy = factor * (y - lastY);
-	      // Limit x-axis rotation angle to -90 to 90 degrees
-	      currentAngle[0] = currentAngle[0] + dy;
-	      // Math.max(Math.min(currentAngle[0] + dy, 90.0), -90.0);
-	      currentAngle[1] = currentAngle[1] + dx;
+	      currentAngle[0] = Math.max(Math.min(currentAngle[0] + dy, 90.0), -90.0);
+	      currentAngle[1] += dx;
   	  }
   	  lastX = x, lastY = y;
   	};
@@ -168,17 +186,17 @@
           //纹理坐标
           u = 1-(j/m);  
           v = 1-(i/m);
-          positionAndColor.push(x, y, z, u, v);
+          positionAndColor.push(x, y, z, u, v,x, y, z);
         }
       }
       gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(positionAndColor), gl.STATIC_DRAW);
       return positionBuffer;
     }
 
-    getSquareRotation(modelViewMatrix,currentAngle){
-      // console.log(selfrotate)
-    	mat4.translate(modelViewMatrix, modelViewMatrix,[-0.0, 0.0, currentAngle[2]]);//模型视图矩阵延Z轴平移
+    mVMatrixRotation(modelViewMatrix,currentAngle){
+    	mat4.translate(modelViewMatrix, modelViewMatrix,[0.0, 0.0, currentAngle[2]]);//模型视图矩阵延Z轴平移
     	mat4.rotate(modelViewMatrix, modelViewMatrix, this.toRadian(currentAngle[0]), [1, 0, 0]);//以Y轴为中心旋转
+
       let currentTime= null;
       if(selfrotate){
        currentTime = Date.now();
@@ -221,19 +239,17 @@
       const modelViewMatrix = mat4.create();
       //注意在操作矩阵前需要通过identity方法将矩阵设置为一个标准矩阵
       mat4.identity(modelViewMatrix, modelViewMatrix);
+
       const cameraMatrix = mat4.create();
       mat4.lookAt(cameraMatrix, vec3.fromValues(0,0,0), vec3.fromValues(0,0,0), vec3.fromValues(0,1,0));
-      this.getSquareRotation(modelViewMatrix,currentAngle);
+      this.mVMatrixRotation(modelViewMatrix,currentAngle);
 
-      //维度，三维空间，四维时间
-      const numsize = 3;
-      //参数类型
-      const type = gl.FLOAT;
-      const normalize = false;
-      //每个顶点数据所占的字节数
-      const stride = 4*5;
-      //从绑定的缓冲区偏移offset个字节开始读数据，一个数据占4个字节
-      const texcoordOffset = 4*3;
+      
+      const numsize = 3;//使用数据的长度
+      const type = gl.FLOAT;//参数类型
+      const normalize = false;// 单位化 (从 0-255 转换到 0-1)
+      const stride = 4*8;//每个顶点数据所占的字节数
+      const texcoordOffset = 4*3;//从绑定的缓冲区偏移offset个字节开始读数据，一个数据占4个字节
       gl.bindBuffer(gl.ARRAY_BUFFER, buffers);
       /*void vertexAttribPointer(GLuint indx, GLint size, GLenum type, GLboolean normalized,GLsizei 
         stride, GLintptr offset);的含义是告诉显卡从当前绑定的缓冲区（bindBuffer()指定的缓冲区）
@@ -257,7 +273,19 @@
         stride,
         texcoordOffset);
       gl.enableVertexAttribArray(programInfo.attribLocations.texcoord);
-        
+
+      // Bind the normal buffer.
+      gl.bindBuffer(gl.ARRAY_BUFFER, buffers);
+      gl.vertexAttribPointer(
+          programInfo.attribLocations.normalLocation, 
+          3, 
+          gl.FLOAT, 
+          false, 
+          stride, 
+          4*5);
+      // Turn on the normal attribute
+      gl.enableVertexAttribArray(programInfo.attribLocations.normalLocation);
+
       //索引缓冲区对象IBO
       const index = [];
 
@@ -279,7 +307,7 @@
       var indexBuffer = gl.createBuffer();
       gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, indexBuffer);
       gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, new Uint16Array(index), gl.STATIC_DRAW);
-
+      
       //把定义的矩阵传递给着色器
       gl.uniformMatrix4fv(
           programInfo.uniformLocations.projectionMatrix,
@@ -294,7 +322,17 @@
           false,
           modelViewMatrix);
 
-       gl.drawElements(gl.TRIANGLES, index.length, gl.UNSIGNED_SHORT, 0);
+      var normalMatrix = mat3.create();
+      //toInverseMat3
+      mat3.normalFromMat4(normalMatrix , modelViewMatrix);
+      mat3.invert(normalMatrix,normalMatrix)
+      mat3.transpose(normalMatrix,normalMatrix);
+      gl.uniformMatrix3fv(
+        programInfo.uniformLocations.nMatrixUniform, 
+        false, 
+        normalMatrix);
+      gl.uniform3fv(programInfo.uniformLocations.lightWorldPositionLocation, [-10.0, 0.0, 0.0]);
+      gl.drawElements(gl.TRIANGLES, index.length, gl.UNSIGNED_SHORT, 0);
       
     }
     
@@ -346,13 +384,17 @@
         attribLocations: {
         	vertexPosition: gl.getAttribLocation(gl.program, 'aVertexPosition'),
         	texcoord:	gl.getAttribLocation(gl.program, "a_texCoord"),
+          normalLocation: gl.getAttribLocation(gl.program, "a_normal")
         },
         //投影矩阵和模型视图矩阵
         uniformLocations: {
         	projectionMatrix: gl.getUniformLocation(gl.program, 'uProjectionMatrix'),
           cameraMatrix: gl.getUniformLocation(gl.program, 'uCameraMatrix'),
         	modelViewMatrix: gl.getUniformLocation(gl.program, 'uModelViewMatrix'),
-        },
+          lightWorldPositionLocation:gl.getUniformLocation(gl.program, "u_lightWorldPosition"),
+          nMatrixUniform:gl.getUniformLocation(gl.program, "uNMatrix"),
+          // pointLightingDiffuseColorUniform:gl.getUniformLocation(gl.program, "uPointLightingDiffuseColor");
+        }
     };
 
     const buffers = globj.initBuffers(gl);
