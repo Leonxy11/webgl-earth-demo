@@ -18,12 +18,15 @@ app.use(bodyParser.json())
 app.use(bodyParser.urlencoded({extended: false}))
 app.use('/dist', express.static(resolve('dist')))
 
+
+// app.get('/threeEarth', function (req, res) {
+//   const html = fs.readFileSync(resolve('dist/' + 'threejsEarth.html'), 'utf-8');
+//   res.send(html)
+// })
 app.get('*', function (req, res) {
-  // const html = fs.readFileSync(resolve('dist/' + 'WEBGL-DEMO.html'), 'utf-8');
   const html = fs.readFileSync(resolve('dist/' + 'WEBGL-DEMO.html'), 'utf-8');
   res.send(html)
 })
-
 app.listen(app.get('port'), function () {
   console.log('Visit http://localhost:' + app.get('port'))
 })
