@@ -173,19 +173,20 @@
 
       let m = 50;
       let r = 2*scale;
-      for (let i = 0; i <= m; i++) {
+      for (let  latitude= 0; latitude <= m; latitude++) {
       	let u;
       	let v;
         let x;
         let z;
-        let l = r*Math.sin(Math.PI*i/m);
-        let y = r*Math.cos(Math.PI*i/m);
-        for(let j = 0; j <= m; j++){
-          x = l*Math.cos(2*Math.PI*j/m);
-          z = l*Math.sin(2*Math.PI*j/m);
+        let l = r*Math.sin(Math.PI*latitude/m);
+        let y = r*Math.cos(Math.PI*latitude/m);
+        for(let longitude = 0; longitude <= m; longitude++){
+          x = l*Math.cos(2*Math.PI*longitude/m);
+          //r*Math.sin(Math.PI*latitude/m)*Math.cos(2*Math.PI*longitude/m)
+          z = l*Math.sin(2*Math.PI*longitude/m);
           //纹理坐标
-          u = 1-(j/m);  
-          v = 1-(i/m);
+          u = 1-(longitude/m);  
+          v = 1-(latitude/m);
           positionAndColor.push(x, y, z, u, v,x, y, z);
         }
       }
@@ -200,7 +201,7 @@
       let currentTime= null;
       if(selfrotate){
        currentTime = Date.now();
-       if (this.lastSquareUpdateTime) {
+        if (this.lastSquareUpdateTime) {
           let delta = currentTime - this.lastSquareUpdateTime;
           this.squareRotation += (10 * delta) / 1000.0;
           mat4.rotate(modelViewMatrix, modelViewMatrix, this.toRadian(this.squareRotation), [0, 1, 0]);
@@ -331,7 +332,7 @@
         programInfo.uniformLocations.nMatrixUniform, 
         false, 
         normalMatrix);
-      gl.uniform3fv(programInfo.uniformLocations.lightWorldPositionLocation, [-10.0, 0.0, 0.0]);
+      gl.uniform3fv(programInfo.uniformLocations.lightWorldPositionLocation, [0.0, 0.0, 0.0]);
       gl.drawElements(gl.TRIANGLES, index.length, gl.UNSIGNED_SHORT, 0);
       
     }
@@ -376,7 +377,8 @@
     let texture = createAndSetupTexture(gl);
     gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE,
               new Uint8Array([4, 2, 255, 255]));
-    let url = "https://earthobservatory.nasa.gov/blogs/elegantfigures/files/2011/10/land_shallow_topo_2011_8192.jpg";
+    
+    let url = "http://localhost:8080/dist/earth.jpg";
     globj.getTextureRsc(gl,url);
 
     const programInfo = {
